@@ -61,7 +61,8 @@ class FilePattern:
                 return None, None, None, None
             return int(res.group(self.order[0])), int(res.group(self.order[1])), int(res.group(self.order[2])), None
 
-def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY):
+
+def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False):
     list = os.listdir(dir)
     sortedList = pattern.sort(list)
 
@@ -69,7 +70,8 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY):
     curYear = None
     curPrefix = None
     for f in sortedList:
-        if os.path.isfile(os.path.join(dir, f)):
+        fPath = os.path.join(dir, f)
+        if os.path.isfile(fPath):
             #            print(f)
             year, month, day, prefix = pattern.extract(f)
 
@@ -97,5 +99,7 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY):
                     curMonth=month
                     if  policy.keepMonth((year, month)):
                         continue
+                print("deleting file: ", fPath)
                 # if not protected by a keep policy delete file
-                os.remove(os.path.join(dir,f))
+                if not test:
+                    os.remove(fPath)

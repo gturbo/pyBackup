@@ -70,6 +70,12 @@ class TestBackup(unittest.TestCase):
         except:
             pass
 
+    def test_debug(self):
+        touch(os.path.join(self.dir, "2016-01-05"))
+        touch(os.path.join(self.dir, "2016-01-06"))
+        backup.cleanUpDir(self.dir, backup.FilePattern("^([0-9]{4})-([0-9]{2})-([0-9]{2})"), test=True)
+        files = os.listdir(self.dir)
+        self.assertTrue(len(files) == 2)
 
 
 if __name__ == '__main__':
