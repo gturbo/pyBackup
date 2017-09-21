@@ -1,6 +1,7 @@
+import datetime
 import os
 import re
-import datetime
+
 
 class RetentionPolicy:
     def __init__(self, keptDays=15, keptMonths=12, keptYears=-1):
@@ -28,23 +29,37 @@ class RetentionPolicy:
 DEFAULT_POLICY = RetentionPolicy()
 
 class FilePattern:
-    def __init__(self, pattern, sortFunc=None, order=[1,2,3], strict=False):
+    def __init__(self, pattern, prefix=False, sortFunc=None, order=[1, 2, 3], strict=False):
         self.pattern=re.compile(pattern)
         if sortFunc != None:
             self.sort=sortFunc
         self.strict = strict
         self.order = order
+        self.prefix = prefix
 
     def sort(self,files):
         return sorted(files)
 
-    def extract(self,fileName):
+    def extract(self, fileName):
+
         res=self.pattern.match(fileName)
-        if res.lastindex != 3:
-            if self.strict:
-                raise Exception("unable to extract year month and day from file {}".format(fileName))
-            return None, None, None
-        return int(res.group(self.order[0])), int(res.group(self.order[1])),int(res.group(self.order[2]))
+        if self.prefix:
+            if res == None or res.lastindex != 4:
+                if self.strict:
+                    raise Exception(
+                        "unable to extract year month and day from file {} check regexp pattern {}".format(fileName,
+                                                                                                           self.pattern))
+                return None, None, None
+            return int(res.group(self.order[0] + 1)), int(res.group(self.order[1] + 1)), int(
+                res.group(self.order[2] + 1)), res.group(1)
+        else:
+            if res == None or res.lastindex != 3:
+                if self.strict:
+                    raise Exception(
+                        "unable to extract year month and day from file {} check regexp pattern {}".format(fileName,
+                                                                                                           self.pattern))
+                return None, None, None, None
+            return int(res.group(self.order[0])), int(res.group(self.order[1])), int(res.group(self.order[2])), None
 
 def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY):
     list = os.listdir(dir)
@@ -52,13 +67,25 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY):
 
     curMonth= None
     curYear = None
+    curPrefix = None
     for f in sortedList:
         if os.path.isfile(os.path.join(dir, f)):
-            year,month, day = pattern.extract(f)
+            #            print(f)
+            year, month, day, prefix = pattern.extract(f)
+
+            # check for prefix
+            if prefix != curPrefix:
+                curPrefix = prefix
+                curMonth = None
+                curYear = None
+
+            # check for not a match if true skip file
+            if year == None:
+                continue
             # check for day limit
             if policy.keepDay((year,month, day)):
-              # keep this and all remaining files that are inside kept days limit
-              break
+                # keep this file
+                continue
             else:
                 # check for year limit
                 if year != curYear:
