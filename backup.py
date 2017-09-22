@@ -4,19 +4,19 @@ import re
 
 
 class RetentionPolicy:
-    def __init__(self, keptDays=15, keptMonths=12, keptYears=-1):
+    def __init__(self, keptDays=15, keptMonths=12, keptYears=-1, now=datetime.datetime.now()):
         self.day = keptDays
         self.month = keptMonths
         self.year = keptYears
-        d = datetime.datetime.now()
+        self.now = now
         if keptYears < 0:
             self.cutYear=-1
         else:
-            self.cutYear=d.year-keptYears
+            self.cutYear = now.year - keptYears
 
         # cut month has year and month part
-        self.cutMonth=(d.year - keptMonths//12, (d.month-keptMonths) % 12)
-        cut = d - datetime.timedelta(keptDays)
+        self.cutMonth = (now.year - keptMonths // 12, (now.month - keptMonths) % 12)
+        cut = now - datetime.timedelta(keptDays)
         self.cutDay = (cut.year, cut.month, cut.day)
 
     def keepYear(self,year):
@@ -62,7 +62,7 @@ class FilePattern:
             return int(res.group(self.order[0])), int(res.group(self.order[1])), int(res.group(self.order[2])), None
 
 
-def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False):
+def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False, silent=False):
     list = os.listdir(dir)
     sortedList = pattern.sort(list)
 
@@ -99,7 +99,8 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False):
                     curMonth=month
                     if  policy.keepMonth((year, month)):
                         continue
-                print("deleting file: ", fPath)
+                if not silent:
+                    print("deleting file: ", fPath)
                 # if not protected by a keep policy delete file
                 if not test:
                     os.remove(fPath)
