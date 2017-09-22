@@ -47,7 +47,7 @@ class FilePattern:
             if res == None or res.lastindex != 4:
                 if self.strict:
                     raise Exception(
-                        "unable to extract year month and day from file {} check regexp pattern {}".format(fileName,
+                        "unable to extract year month and day from file {0} check regexp pattern {1}".format(fileName,
                                                                                                            self.pattern))
                 return None, None, None
             return int(res.group(self.order[0] + 1)), int(res.group(self.order[1] + 1)), int(
@@ -56,14 +56,18 @@ class FilePattern:
             if res == None or res.lastindex != 3:
                 if self.strict:
                     raise Exception(
-                        "unable to extract year month and day from file {} check regexp pattern {}".format(fileName,
+                        "unable to extract year month and day from file {0} check regexp pattern {1}".format(fileName,
                                                                                                            self.pattern))
                 return None, None, None, None
             return int(res.group(self.order[0])), int(res.group(self.order[1])), int(res.group(self.order[2])), None
 
 
-def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False, silent=False):
+def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False, silent=False, verbose=False):
+    if not silent:
+	print("{0} starting cleanup of directory {1}".format(datetime.datetime.now(), dir)) 
     list = os.listdir(dir)
+    if verbose:
+        print("found {0} files".format(len(list)))
     sortedList = pattern.sort(list)
 
     curMonth= None
@@ -72,7 +76,8 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False, silent=False):
     for f in sortedList:
         fPath = os.path.join(dir, f)
         if os.path.isfile(fPath):
-            #            print(f)
+            if verbose:
+                print("VERBOSE handling file {0}".format(f))
             year, month, day, prefix = pattern.extract(f)
 
             # check for prefix
@@ -100,7 +105,10 @@ def cleanUpDir(dir, pattern, policy=DEFAULT_POLICY, test=False, silent=False):
                     if  policy.keepMonth((year, month)):
                         continue
                 if not silent:
-                    print("deleting file: ", fPath)
+                    print("deleting file: {0}".format(fPath))
                 # if not protected by a keep policy delete file
                 if not test:
                     os.remove(fPath)
+    if not silent:
+        print("{0} end cleanup of directory {1}".format(datetime.datetime.now(), dir))
+ 
