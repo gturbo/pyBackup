@@ -1,6 +1,5 @@
-import asyncio
-
 import aiohttp
+import asyncio
 
 
 @asyncio.coroutine
@@ -18,5 +17,6 @@ def main():
 
 
 loop = asyncio.get_event_loop()
+loop.q
 loop.run_until_complete(main())
 loop.close()
