@@ -110,7 +110,7 @@ class Cluster:
             def _encodePath(self, dir):
                 return urllib.quote(dir.encode("utf-8", "replace"))
 
-            def __init__(self, namenode, port, user, verbose=False, forceHttp=False):
+            def __init__(self, namenode, port='50070', user='hdfs', verbose=False, forceHttp=False):
                 self.namenode = namenode
                 self.port = port
                 self.user = user
