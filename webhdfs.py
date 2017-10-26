@@ -31,10 +31,18 @@ _FSLIST2 = 'FileStatus'
 
 _RESP_BOOL_TRUE = '{"boolean": true}'
 
+SNAPSHOT_DIR_NAME = '.snapshot'
+
+
+def _checkStatus(curl, buffer):
+    status = curl.getinfo(pycurl.HTTP_CODE)
+    if status >= 400:
+        raise WebHdfsApiException(curl, buffer)
 
 def curlGet(url):
     c, buffer = _curl_prepare(url)
     c.perform()
+    _checkStatus(c, buffer)
     c.close()
     return buffer.getvalue()
 
@@ -42,6 +50,7 @@ def curlGet(url):
 def _curl_prepare(url):
     buffer = StringIO()
     c = pycurl.Curl()
+    c.url = url
     if DEBUG:
         c.setopt(pycurl.VERBOSE, 9)
     if fromDeskTop:
@@ -59,6 +68,7 @@ def curlDel(url):
     c, buffer = _curl_prepare(url)
     c.setopt(pycurl.CUSTOMREQUEST, 'DELETE')
     c.perform()
+    _checkStatus(c, buffer)
     c.close()
     return buffer.getvalue()
 
@@ -67,6 +77,7 @@ def curlPut(url):
     c, buffer = _curl_prepare(url)
     c.setopt(pycurl.CUSTOMREQUEST, 'PUT')
     c.perform()
+    _checkStatus(c, buffer)
     c.close()
     return buffer.getvalue()
 
@@ -84,17 +95,46 @@ def curlPutFile(url, file):
     with open(file, 'rb') as f2:
         c.setopt(pycurl.READDATA, f2)
         c.perform()
-    status = c.getinfo(pycurl.RESPONSE_CODE)
+    _checkStatus(c, buffer)
     c.close()
-    return status, buffer.getvalue()
+    return buffer.getvalue()
 
 
-class DirectoryNotFound(Exception):
+class WebHdfsException(Exception):
+    pass
+
+
+class WebHdfsApiException(WebHdfsException):
+    def __init__(self, curl, buffer):
+        error = ''
+        try:
+            respTxt = buffer.getvalue()
+            error = respTxt
+            self.url = curl.url if hasattr(curl, 'url') else 'UNKNOWN'
+            self.status = curl.getinfo(pycurl.HTTP_CODE)
+            error = 'ERROR HTTP {1} processing request: {0}'.format(
+                self.url,
+                self.status
+            )
+            resp = json.loads(respTxt)['RemoteException']
+            self.exception = resp['exception']
+            self.message = resp['message']
+            error += '\nException: {0} Message: {1}\n'.format(
+                self.exception,
+            )
+            super(Exception, self).__init__(error)
+        except:
+            super(Exception, self).__init__(error)
+        finally:
+            curl.close()
+
+
+class DirectoryNotFound(WebHdfsException):
     def __init__(self, value):
         self.value = "Missing Directory {0}".format(value)
 
 
-class MultipleFileToExistingFile(Exception):
+class MultipleFileToExistingFile(WebHdfsException):
     def __init__(self, value):
         self.value = "Trying to copy multiple file to existing file {0}".format(value)
 
@@ -117,7 +157,7 @@ class Cluster:
                 self.baseUrl = 'http://' + namenode + ':' + str(port) + '/webhdfs/v1'
                 self.userUrl = '?user.name=' + self.user
                 self._hasHdfsClient = False if forceHttp else None
-                self.baseURI = 'hdfs://' + namenode
+                self.baseURI = 'hdfs://{0}:{1}'.format(namenode, '8020')
                 self._copyProcesses = []
                 self.verbose = verbose
                 self._devnull = open(os.devnull, 'w')
@@ -188,14 +228,14 @@ class Cluster:
                     resp = json.loads(
                         curlGet(self.baseUrl + self._encodePath(path) + self.userUrl + '&op=GETFILESTATUS'))
                     return resp[_FSLIST2]
-                except (KeyError, ValueError):
+                except (WebHdfsApiException, KeyError, ValueError):
                     raise DirectoryNotFound(dir)
 
             def _ls(self, dir):
                 try:
                     resp = json.loads(curlGet(self.lsUrl(dir)))
                     return resp[_FSLIST][_FSLIST2]
-                except (KeyError, ValueError):
+                except (WebHdfsApiException, KeyError, ValueError):
                     raise DirectoryNotFound(dir)
 
             def mkDir(self, dirPath, octalPermission=None):
@@ -204,6 +244,24 @@ class Cluster:
                     url += '&permission=' + octalPermission
                 resp = curlPut(url)
                 return resp == _RESP_BOOL_TRUE
+
+            def createSnapshot(self, dirPath, snapshotName=None):
+                url = self.baseUrl + self._encodePath(dirPath) + self.userUrl + '&op=CREATESNAPSHOT'
+                if snapshotName != None:
+                    url += '&snapshotname=' + snapshotName
+                respTxt = curlPut(url)
+                resp = json.loads(respTxt)
+                return resp['Path']
+
+            def deleteSnapshot(self, dirPath, snapshotName):
+                url = self.baseUrl + self._encodePath(dirPath) + self.userUrl + '&op=DELETESNAPSHOT'
+                if snapshotName != None:
+                    url += '&snapshotname=' + snapshotName
+                resp = curlDel(url)
+                return resp == ''
+
+            def lsSnapshot(self, dirPath):
+                return self.ls_dirs(self.join(dirPath, SNAPSHOT_DIR_NAME))
 
             def rm(self, dir, recursive=True):
                 url = self.baseUrl + self._encodePath(dir) + self.userUrl + '&op=DELETE'
@@ -274,6 +332,7 @@ class Cluster:
                     c.setopt(pycurl.HEADER, 1)
                     c.setopt(pycurl.HEADERFUNCTION, headers.write)
                     c.perform()
+                    _checkStatus(c, buffer)
                     c.close()
                     headersTxt = headers.getvalue()
                     headerLines = headersTxt.split('\n')
@@ -287,13 +346,7 @@ class Cluster:
                                 break
                     if redirect == None:
                         raise Exception("unable to create file\r\n" + headersTxt)
-                    status, body = curlPutFile(redirect, src)
-                    if status != 201:
-                        print(
-                        'ERROR aborting Unexpected error copying file {0} among {1} with webhdfs'.format(src, sources))
-                        print('datanode response:')
-                        print(body)
-                        return False
+                    curlPutFile(redirect, src)
 
             def existDir(self, dir):
                 try:
@@ -328,6 +381,15 @@ class Cluster:
                 while base[-1] == '/':
                     base = base[:-1]
                 return base
+
+            def basename(self, path):
+                # ignore ending /
+                last = len(path) - 1
+                while path[last] == '/':
+                    last -= 1
+                start = path.rfind('/', 0, last)
+                return path[start + 1:last + 1]
+
 
             def mirror(self, local, hdfs, followlinks=True, verbose=False):
                 self._mirror(local, hdfs, followlinks, verbose)

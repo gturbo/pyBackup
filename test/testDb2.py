@@ -2,22 +2,22 @@ import sys
 import tempfile
 import unittest
 
-import ibm_db
-
 import db2tools
+
+# import ibm_db
 
 BSQLREC = db2tools.getConnectionString('bigsql', 'sriopmgta0101.recette.local', 32051, 'idrelec', 'Pomme+2')
 MAXPRINT = 40
 
 
 class MyTestCase(unittest.TestCase):
-    def test_connection(self):
-        conn = ibm_db.connect(BSQLREC, '', '')
-        if conn:
-            print "Connection succeeded."
-            ibm_db.close(conn)
-        else:
-            print "Connection failed."
+    # def test_connection(self):
+    #     conn = ibm_db.connect(BSQLREC, '', '')
+    #     if conn:
+    #         print "Connection succeeded."
+    #         ibm_db.close(conn)
+    #     else:
+    #         print "Connection failed."
 
     def testParsingTable(self):
         parser = db2tools.Reader('../resources/sampleDDL.sql')
@@ -91,7 +91,6 @@ class MyTestCase(unittest.TestCase):
         ]
         for ddl in ddls:
             print('handling request:\n' + ddl)
-            parser = db2tools.Reader()
             m = db2tools.RE_CREATE_TABLE.match(ddl)
             for i in range(m.lastindex):
                 print('group {0}: {1}'.format(i + 1, m.group(i + 1)))
@@ -103,7 +102,6 @@ class MyTestCase(unittest.TestCase):
         ]
         for ddl in ddls:
             print('handling request:\n' + ddl)
-            parser = db2tools.Reader()
             m = db2tools.RE_STORAGE_TEXT.match(ddl)
             self.assertTrue(m is not None,
                             'regexp:\n {0}\ndid not match:\n{1}'.format(db2tools.RE_STORAGE_TEXT.pattern, ddl))
@@ -114,7 +112,6 @@ class MyTestCase(unittest.TestCase):
         ]
         for ddl in ddls:
             print('handling request:\n' + ddl)
-            parser = db2tools.Reader()
             m = db2tools.RE_STORAGE_PARQUET.match(ddl)
             self.assertTrue(m is not None,
                             'regexp:\n {0}\ndid not match:\n{1}'.format(db2tools.RE_STORAGE_TEXT.pattern, ddl))

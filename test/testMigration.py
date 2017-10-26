@@ -4,24 +4,38 @@ import tempfile
 import unittest
 from shutil import rmtree
 
+import db2tools
 import webhdfs
 
 CLUSTER_PARAMS = ('sriopmgta0101.recette.local', '50070', 'et20795')
+CLUSTER_PARAMS_DEST = ('sriopmgta0101.recette.local', '50070', 'et20795')
 CLUSTER_SNAP_DIR = '/user/et20795/copy'
+CLUSTER_MIRROR_DIR = '/user/et20795/mirror'
+
 
 class TestWebHdfsFiles(unittest.TestCase):
     def tearDown(self):
+        rmtree(self.tmpDir)
+
         with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
-            rmtree(self.tmpDir)
-            cluster.rm(self.hdfsTmpDir)
+            for f in cluster.ls(CLUSTER_SNAP_DIR):
+                cluster.rm(cluster.join(CLUSTER_SNAP_DIR, f), True)
+            for f in cluster.ls(CLUSTER_MIRROR_DIR):
+            # cluster.rm(cluster.join(CLUSTER_MIRROR_DIR, f), True)
+            for snap in cluster.lsSnapshot(CLUSTER_SNAP_DIR):
+                cluster.deleteSnapshot(CLUSTER_SNAP_DIR, snap)
 
     def setUp(self):
         with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
             self.tmpDir = tempfile.mkdtemp()
             print("created temporary directory ", self.tmpDir)
-            self.hdfsTmpDir = cluster.join('/tmp', os.path.basename(self.tmpDir))
-            cluster.mkDir(self.hdfsTmpDir)
-            print("created hdfs temporary directory", self.hdfsTmpDir)
+            self.hdfsTmpDir = CLUSTER_SNAP_DIR
+            # cleanup directory
+            for f in cluster.ls(CLUSTER_SNAP_DIR):
+                cluster.rm(cluster.join(CLUSTER_SNAP_DIR, f), True)
+            for f in cluster.ls(CLUSTER_MIRROR_DIR):
+                cluster.rm(cluster.join(CLUSTER_MIRROR_DIR, f), True)
+
             self.filenum = 1
             self.dirnum = 1
 
@@ -73,71 +87,20 @@ class TestWebHdfsFiles(unittest.TestCase):
         cluster.deleteSnapshot(CLUSTER_SNAP_DIR, snapName)
         self.assertFalse(cluster.existDir(snapPath))
 
-    def testBasename(self):
+    def testDistCopy(self):
         with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
-            self.assertEquals('p', cluster.basename('/p'))
-            self.assertEquals('p', cluster.basename('/p//'))
-            self.assertEquals('p', cluster.basename('p'))
-            self.assertEquals('p', cluster.basename('a/b/c/p'))
-
-    def testCopyFromLocal(self):
-        with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
-            # copy with same name
-            f = self.mkFile()
-            hdfs_ls = cluster.ls(self.hdfsTmpDir)
-            self.assertTrue(len(hdfs_ls) == 0)
-            webhdfs.DEBUG = False
-            cluster.copyFromLocal(f, self.hdfsTmpDir + '/')
-            cluster._waitForAllProcess()
-            webhdfs.DEBUG = False
-            hdfs_ls = cluster._ls(self.hdfsTmpDir)
-            self.assertTrue(len(hdfs_ls) == 1)
-            self.assertEqual(hdfs_ls[0][webhdfs.FS_NAME], 'f1')
-            self.assertEqual(hdfs_ls[0][webhdfs.FS_LENGTH], os.stat(f).st_size)
-
-            # copy with new name
-            myFile = 'my-file'
-            myFilePath = cluster.join(self.hdfsTmpDir, myFile)
-            cluster.copyFromLocal(f, myFilePath)
-            cluster._waitForAllProcess()
-            hdfs_ls = cluster.ls(self.hdfsTmpDir)
-            self.assertTrue(len(hdfs_ls) == 2)
-            self.assertTrue(hdfs_ls.index(myFile) >= 0)
-
-            # test stat
-            stat = cluster.stat(myFilePath)
-            self.assertEqual(os.path.getsize(f), stat[webhdfs.FS_LENGTH])
-
-            stat2 = cluster.stat(self.hdfsTmpDir)
-            print(stat2)
-            self.assertEqual(2, stat2[webhdfs.FS_NUM_CHILD])
-            try:
-                cluster.stat(cluster.join(self.hdfsTmpDir, 'does-not-exist'))
-                self.assertTrue(False, 'should not be reached')
-            except webhdfs.DirectoryNotFound as e:
-                pass
-
-    def testMultipleCopyFromLocal(self):
-        with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
-            files = [self.mkFile() for i in range(3)]
-            hdfs_ls = cluster.ls(self.hdfsTmpDir)
-            self.assertTrue(len(hdfs_ls) == 0)
-            # webhdfs.DEBUG=True
-            cluster.copyFromLocal(files, self.hdfsTmpDir)
-            cluster._waitForAllProcess()
-            webhdfs.DEBUG = False
-            hdfs_ls = cluster.ls(self.hdfsTmpDir)
-            self.assertTrue(len(hdfs_ls) == 3)
-
-    def testMirror(self):
-        with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
+            # create source arbo
             self.mkFile()
             self.mkFile()
             [dir1Path] = self.mkDir(files=2)
             [dir2Path, dir3Path] = self.mkDir(dir1Path, files=2, dirs=2)
             self.listLocalDir(self.tmpDir)
-            cluster.mirror(self.tmpDir, self.hdfsTmpDir)
-            self.listHdfsDir(cluster, self.hdfsTmpDir)
+            cluster.mirror(self.tmpDir, CLUSTER_SNAP_DIR)
+            # perform first copy
+            snapPath = db2tools.copyClusterPath(cluster, cluster, CLUSTER_SNAP_DIR, CLUSTER_MIRROR_DIR)
+            snapName = cluster.basename(snapPath)
+            print('MIRROR after init copy')
+            self.listHdfsDir(cluster, CLUSTER_MIRROR_DIR)
             """ CREATING ARBO:
                 + self.tmpDir
                   - f1
@@ -152,8 +115,8 @@ class TestWebHdfsFiles(unittest.TestCase):
                           - f7
                           - f8
             """
-            self.assertEqual(3, len(cluster.ls(self.hdfsTmpDir)))
-            h_dir1Path = cluster.join(self.hdfsTmpDir, 'dir1')
+            self.assertEqual(3, len(cluster.ls(CLUSTER_MIRROR_DIR)))
+            h_dir1Path = cluster.join(CLUSTER_MIRROR_DIR, 'dir1')
             subdirs = cluster.ls_dirs(h_dir1Path)
             print(subdirs)
             self.assertEqual(2, len(subdirs))
@@ -162,6 +125,8 @@ class TestWebHdfsFiles(unittest.TestCase):
             files = cluster.ls(h_dir2Path)
             print(files)
             self.assertEqual(2, len(files))
+
+            # make some change to check update
             self.mkFile(name='fadded')
             os.remove(os.path.join(self.tmpDir, 'f2'))
             os.remove(os.path.join(dir1Path, 'f3'))
@@ -169,14 +134,19 @@ class TestWebHdfsFiles(unittest.TestCase):
             shutil.rmtree(dir3Path)
             self.mkDir(dir1Path, files=2)
             [f3, f4] = [f for f in cluster._ls(h_dir1Path) if f[webhdfs.FS_TYPE] == webhdfs.FT_FILE]
-            cluster.mirror(self.tmpDir, self.hdfsTmpDir, verbose=True)
+            cluster.mirror(self.tmpDir, CLUSTER_SNAP_DIR)
+
+            # synchronize from previous snapshot
+            diffSnapPath = db2tools.updateClusterPath(snapName, cluster, cluster, CLUSTER_SNAP_DIR, CLUSTER_MIRROR_DIR)
+            print('MIRROR after update')
+            self.listHdfsDir(cluster, CLUSTER_MIRROR_DIR)
             _dir1List = cluster._ls(h_dir1Path)
             [f3_after, f4_after] = [f for f in _dir1List if f[webhdfs.FS_TYPE] == webhdfs.FT_FILE]
             self.assertEqual(f4[webhdfs.FS_MODIFICATION_TIME], f4_after[webhdfs.FS_MODIFICATION_TIME],
                              'unchanged files should have same modification time')
             self.assertTrue(f3_after[webhdfs.FS_MODIFICATION_TIME] >= f3[webhdfs.FS_MODIFICATION_TIME],
                             'changed files should have different modification time')
-            filesAfter = cluster.ls(self.hdfsTmpDir)
+            filesAfter = cluster.ls(CLUSTER_SNAP_DIR)
             dir1List = [f[webhdfs.FS_NAME] for f in _dir1List]
             self.assertTrue('fadded' in filesAfter)
             self.assertFalse('f2' in dir1List)
@@ -184,28 +154,7 @@ class TestWebHdfsFiles(unittest.TestCase):
             self.assertFalse('dir3' in dir1List)
             self.listHdfsDir(cluster)
 
-        """ CREATING ARBO:
-            + self.tmpDir
-              - f1
-              - f2          *** deleted
-              - fadded      *** added
-              + dir1
-                  - f3      *** update content
-                  - f4
-                  + dir2
-                      - f5
-                      - f6
-                  + dir3    *** deleted
-                      - f7
-                      - f8
-                  + dir4    *** added
-                      - f11
-                      - f12
-        """
-
-    def testLocalCmd(self):
-        with webhdfs.Cluster(*CLUSTER_PARAMS) as cluster:
-            print('hasHDFSClient = {0}'.format(cluster.hasHdfsClient()))
+            self.assertTrue(cluster.existDir(CLUSTER_SNAP_DIR))
 
     def listLocalDir(self, dir=None):
         dir2 = dir if dir != None else self.tmpDir

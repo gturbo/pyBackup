@@ -1,4 +1,7 @@
+import datetime
+import os
 import re
+import subprocess
 import sys
 
 SRE_MATCH_TYPE = type(re.match("", ""))
@@ -53,9 +56,108 @@ RE_SKIP = re.compile(
 )
 
 
+def execLinuxCmd(cluster, command):
+    """
+        Execute a system command on the cluster namenode
+
+        Parameters
+        ----------
+        command : str
+            The shell command
+        cluster : webhdfs.Cluster.cluster
+            The cluster on which to execute the command
+        Returns
+        -------
+        int
+            command return status 0 if OK
+
+    """
+    print('executing linux command:\n{0}\n'.format(command))
+    if sys.platform != 'win32':
+        __isMgt = True
+    else:
+        __isMgt = False
+        __envExecCmd = os.environ.copy()
+        # retrieve agent process
+        environFilePath = 'U:\\.ssh\\environment'
+        print(environFilePath)
+        found = False
+        with open(environFilePath, 'r') as envFile:
+            for line in envFile:
+                pattern = re.compile(r'SSH_AUTH_SOCK=([^;]+)')
+                m = pattern.match(line)
+                if m:
+                    found = True
+                    __envExecCmd['SSH_AUTH_SOCK'] = m.group(1)
+                    break
+        if not found:
+            raise Exception(
+                'Unable to find ssh agent configuration file {0}\nSorry but you need to configure an ssh agent, a connexion and perhaps a gitbash to test from windows'.format(
+                    environFilePath))
+
+    if __isMgt:
+        p = subprocess.Popen([command], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    else:
+        p = subprocess.Popen(['ssh', '{0}@{1}'.format(cluster.user, cluster.namenode), command], stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env=__envExecCmd)
+    out, err = p.communicate()
+    print('out:\n{0}\nerr:\n{1}'.format(out, err))
+
 def getConnectionString(database, host, port, user, password):
     return 'DATABASE={0};HOSTNAME={1};PORT={2};PROTOCOL=TCPIP;UID={3};PWD={4}'.format(database, host, str(port), user,
                                                                                       password)
+
+
+def copyClusterPath(sourceCluster, destCluster, srcPath, destPath=None):
+    destPath2 = destPath if destPath is not None else srcPath
+    snapName = 'copyCluster-{0}'.format(datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S'))
+    snapPath = sourceCluster.createSnapshot(srcPath, snapName)
+    execLinuxCmd(sourceCluster, 'hadoop distcp -overwrite -delete -pugpaxt "{0}" "{1}"'.format(
+        sourceCluster.join(sourceCluster.baseURI, snapPath),
+        destCluster.join(destCluster.baseURI, destPath2))
+                 )
+    destCluster.createSnapshot(destPath, snapName)
+    return snapPath
+
+
+def updateClusterPath(fromSnapshot, sourceCluster, destCluster, srcPath, destPath=None):
+    """
+        update mirrored path from specified snapshot
+        must be used on a copy created with copyClusterPath function.
+
+        Parameters
+        ----------
+        fromSnapshot : str
+            The snapshot taken before precedent copy used to calculate differences
+        sourceCluster : webhdfs.Cluster.cluster
+            The source cluster objects
+        destCluster : webhdfs.Cluster.cluster
+            The destination cluster objects
+        srcPath : str
+            source directory for mirroring must be snapshotable and have a snapshot with name fromSnapshot
+        destPath : str
+            destination directory for copy defaults to same path as source
+
+        Returns
+        -------
+        str
+            full path of the created snapshot for source
+
+        """
+    if fromSnapshot not in sourceCluster.lsSnapshot(srcPath):
+        raise Exception('Cannot find snapshot {0} for source directory {1}'.format(fromSnapshot, srcPath))
+    destPath2 = destPath if destPath is not None else srcPath
+    snapName = 'copyCluster-{0}'.format(datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S'))
+    snapPath = sourceCluster.createSnapshot(srcPath, snapName)
+    execLinuxCmd(sourceCluster, 'hadoop distcp -delete -update -pugpaxt -diff "{0}" "{1}" "{2}" "{3}"'.format(
+        fromSnapshot,
+        snapName,
+        sourceCluster.join(sourceCluster.baseURI, srcPath),
+        destCluster.join(destCluster.baseURI, destPath2))
+                 )
+    destCluster.createSnapshot(destPath, snapName)
+    return snapPath
+
 
 
 class ParsingException(Exception):
@@ -469,6 +571,19 @@ class Grant(DBObject):
     pass
 
 
+if sys.version_info[0] <= 2 and sys.version_info[1] <= 6:
+    raise Exception("""
+    This module doesn't work with version of python before 2.7
+    (due to regex performance problems)
+    
+    PLEASE run with a python version superior to 2.7
+    
+    \033[0;31mOn Hadoop management nodes, you can make python 2.7 available by sourcing :
+    
+    . /opt/rh/python27/enable \033[0m
+      
+    """)
+
 if __name__ == '__main__':
     def printUsage():
         print("""This python file can be either imported as a module or used directly from the command line
@@ -485,13 +600,13 @@ Available command line options:
     args = sys.argv[1:]
     #    print(args)
     argCount = len(args)
-    if argCount < 1 or len([a for a in args if 'help' in a.lower()]) > 0:
+    if argCount < 1 or args[0] in ['-h', '--help']:
         printUsage()
         exit(0)
 
     function = args[0]
     if function == 'filterDDL':
-        if argCount > 1 and argCount < 3:
+        if argCount > 1 and argCount <= 4:
             filterDDL(*args[1:])
         else:
             print('ERROR wrong number of arguments for function {0}'.format(function))
