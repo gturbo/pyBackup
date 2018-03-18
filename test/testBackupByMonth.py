@@ -25,43 +25,51 @@ class TestBackupByMonth(unittest.TestCase):
         print("created temporary directory ", self.dir)
 
     def createFiles(self, prefix=""):
-        stop = datetime.datetime(2017, 10, 10)
-        d = datetime.datetime(stop.year - 1, 1, 1)
+        stop = datetime.datetime.now()
+        d = datetime.datetime(stop.year - 1, stop.month, stop.day)
         inc = datetime.timedelta(1)
         while (d < stop):
             t = time.mktime(d.timetuple())
             touch(os.path.join(self.dir, "{0}{1:04d}-{2:02d}-{3:02d}-21H10.log".format(prefix, d.year, d.month, d.day)),
                   (t, t))
             d += inc
-
+        # compute nb days from the start of 2 month ago
+        s = datetime.datetime(stop.year, stop.month-1,1) if stop.month > 1 else datetime.datetime(stop.year-1, 12,1)
+        self.nbDays = (stop - s).days
     def testSimple(self):
         self.createFiles()
         self.assertTrue(True)
         filesBefore = os.listdir(self.dir)
-        self.assertTrue(len(filesBefore) > 600)
+        self.assertTrue(len(filesBefore) > 350)
         backupBefore = os.listdir(self.dest)
         self.assertTrue(len(backupBefore) == 0)
         backup.backupByMonth(self.dir, self.dest, 'test', 2)
         filesAfter = os.listdir(self.dir)
         backupAfter = os.listdir(self.dest)
-        self.assertTrue(len(filesAfter) == 38)
-        self.assertTrue(len(backupAfter) == 23)
+        #print(len(filesAfter), self.nbDays)
+        self.assertTrue(len(filesAfter) == self.nbDays)
+        self.assertTrue(len(backupAfter) == 13)
 
     def testCmdLine(self):
         self.createFiles()
         self.assertTrue(True)
         filesBefore = os.listdir(self.dir)
-        self.assertTrue(len(filesBefore) > 600)
+        self.assertTrue(len(filesBefore) > 350)
         backupBefore = os.listdir(self.dest)
         self.assertTrue(len(backupBefore) == 0)
         env = os.environ.copy()
-        p = subprocess.Popen(['python', '../backup.py', 'backupByMonth', self.dir, self.dest, 'test', str(2)])
+        testPath = None
+        try:
+            testPath = os.path.split(os.path.split(__file__)[0])[0]
+        except:
+            testPath = '..'
+        p = subprocess.Popen(['python', os.path.join(testPath, 'backup.py'), 'backupByMonth', self.dir, self.dest, 'test', str(2)])
         s = p.wait()
         self.assertTrue(s == 0)
         filesAfter = os.listdir(self.dir)
         backupAfter = os.listdir(self.dest)
-        self.assertTrue(len(filesAfter) == 38)
-        self.assertTrue(len(backupAfter) == 23)
+        self.assertTrue(len(filesAfter) == self.nbDays)
+        self.assertTrue(len(backupAfter) == 13)
 
 
 if __name__ == '__main__':
